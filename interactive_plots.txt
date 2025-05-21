@@ -1,0 +1,32 @@
+Nonlinear vm balanced
+https://www.desmos.com/calculator/bogynbfhzb
+
+Nonlinear vm one-sided
+https://www.desmos.com/calculator/orpovs2meo
+
+Nonlinear vm unbalanced
+https://www.desmos.com/calculator/3pmkabbwto
+
+Games balanced
+https://www.desmos.com/calculator/8sihejgj1p
+
+Games one-sided
+https://www.desmos.com/calculator/k7jx1qenti
+
+Games unbalanced
+https://www.desmos.com/calculator/h7cnstiqzq
+
+Partisan general conditions
+https://www.desmos.com/calculator/1ysw0b0bzg
+
+Partisan no zealots
+https://www.desmos.com/calculator/n0qvs8gudv
+
+Partisan balanced
+https://www.desmos.com/calculator/zuuhwfqbpd
+
+Partisan one-sided
+https://www.desmos.com/calculator/7qehi8x1qu
+
+Partisan unbalanced
+https://www.desmos.com/calculator/y23hmuqfnn
