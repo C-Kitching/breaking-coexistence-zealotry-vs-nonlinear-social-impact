@@ -1,0 +1,348 @@
+/**
+ * @brief Calculate the matrix A for use in determining the quasi stationary 
+ * distribution analytically for the nonlinear voter model with absorbing 
+ * zealots in finite populations
+ * 
+ * @param N population size
+ * @param Z number of +1 susceptibles
+ * 
+ * @return std::vector<std::vector<double>> 
+ */
+std::vector<std::vector<double>> calculate_A_matrix_nonlinear_vm(
+    const std::vector<double> (&all_Tplus), 
+    const std::vector<double> (&all_Tminus), const int& N, const int& Z)
+{
+    // initialise matrix with all zeros
+    std::vector<std::vector<double>> A;
+    A.reserve(N-Z);
+    for (int i = 0; i < N-Z; ++i)
+        A.emplace_back(std::vector<double>(N-Z, 0.));
+
+    // set diagonal elements
+    for (int i{0}; i <= N-Z-1; i++)
+        A[i][i] = -(all_Tplus[i] + all_Tminus[i]);
+
+    // set upper elements
+    for (int i{0}; i <= N-Z-2; i++)
+        A[i][i+1] = all_Tplus[i];
+
+    // set lower elements
+    for (int i{1}; i <=N-Z-1; i++)
+        A[i][i-1] = all_Tminus[i];
+
+    return A;
+
+}
+
+/**
+ * @brief Calculate the quasi stationary distribution analytically
+ * for the nonlinear voter model in finite populations with absorbing zealots
+ * 
+ */
+void quasi_stationary_distribution_numeric_nonlinear_vm(
+    const double& q, const int& N, const int& Z)
+{
+    // params
+    std::stringstream qss;
+    qss << "q=" << q;
+    std::stringstream Zss;
+    Zss << "Z=" << Z;
+    double delta = 0.0001;
+
+    // set up folders for writing data
+    std::vector<std::string> folder_names = {
+        "nonlinear_vm", "quasi_stationary_distribution", qss.str(), Zss.str()};
+
+    // initialise quasi distribution
+    const int size = N-Z;
+    std::vector<double> quasi_distribution(size, 1./size);
+
+    // pre calculate all variables
+    std::vector<double> all_Tplus = calculate_all_Tplus_nonlinear_vm(N, Z, q);
+    std::vector<double> all_Tminus = calculate_all_Tminus_nonlinear_vm(N, Z, q);
+    std::vector<std::vector<double>> A = calculate_A_matrix_nonlinear_vm(
+        all_Tplus, all_Tminus, N, Z);
+
+    std::vector<double> dqdt(size, 0.0); // Preallocate dq/dt
+    std::vector<double> new_quasi_distribution(size); // Preallocate new distribution
+
+    // repeatedly run the numerical integration until convergence
+    double diff{1000};
+    double tol{1e-8};
+    double max_iter{1e10};
+    double iter{0};
+    do {
+
+        // calculate derivative dq/dt
+        std::fill(dqdt.begin(), dqdt.end(), 0.0); // Reset dq/dt
+        for (int i{0}; i < size; i++){
+
+            for (int j{0}; j < size; j++)
+                dqdt[i] += quasi_distribution[j] * A[j][i];
+
+            dqdt[i] += all_Tplus[size-1]*quasi_distribution[size-1]*quasi_distribution[i];
+        }  
+
+        // Update quasi_distribution
+        diff = 0.0;
+        for (int i = 0; i < size; i++) {
+            new_quasi_distribution[i] = quasi_distribution[i] + delta * dqdt[i];
+            diff += std::abs(quasi_distribution[i] - new_quasi_distribution[i]);
+        }
+
+        // Update for next iteration
+        quasi_distribution.swap(new_quasi_distribution);
+
+        iter++;
+
+    } while (diff > tol && iter < max_iter);
+
+    // write data to file
+    write_single_vector_to_file(quasi_distribution, folder_names, "quasi_stationary_distribution_numeric_nonlinear_vm");
+
+}
+
+
+
+
+
+
+/**
+ * @brief Form the transition matrix A an an Eigen matrix object for use in 
+ * numerically solving for the quasi stationary distribution
+ * 
+ * @param all_Tplus vector of all T+ values
+ * @param all_Tminus vector of all T- values
+ * @param N population size
+ * @param Z number of +1 zealots
+ * @return Eigen::MatrixXd 
+ */
+Eigen::MatrixXd calculate_A_matrix_nonlinear_vm_test(
+    const std::vector<double>& all_Tplus, 
+    const std::vector<double>& all_Tminus, 
+    const int& N, const int& Z)
+{
+    // Size of the matrix
+    int size = N - Z;
+
+    // Initialize an Eigen matrix with zeros
+    Eigen::MatrixXd A = Eigen::MatrixXd::Zero(size, size);
+
+    // Set diagonal elements
+    for (int i = 0; i < size; i++) {
+        A(i, i) = -(all_Tplus[i] + all_Tminus[i]);
+    }
+
+    // Set upper diagonal elements
+    for (int i = 0; i < size - 1; i++) {
+        A(i, i + 1) = all_Tminus[i+1];
+    }
+
+    // Set lower diagonal elements
+    for (int i = 1; i < size; i++) {
+        A(i, i - 1) = all_Tplus[i-1];
+    }
+
+    return A;
+}
+
+/**
+ * @brief Perform explict (forward) Euler numerical integration using 
+ * the Eigen package
+ * 
+ * @param A Transition matrix with size (N-Z, N-Z)
+ * @param q quasi-stationary row vector of size (N-Z)
+ * @param Tplus single element T+[N-Z-1]
+ * @param delta time step
+ * @param max_iter max number of iterations
+ * @param tolerance threshold for stopping numerical integration
+ */
+void explicit_euler(const Eigen::MatrixXd& A, Eigen::RowVectorXd& q, 
+    const double& Tplus, const double& delta, const int& max_iter, 
+    const double& tolerance)
+{
+    int size = q.size();
+    Eigen::RowVectorXd q_next(size);
+
+    for (int i = 0; i < max_iter; i++) {
+        q_next.noalias() = q + delta * (q*A + Tplus*q[size-1]*q);
+        double relative_change = (q_next-q).cwiseAbs().sum();
+        q = std::move(q_next);
+        if (relative_change < tolerance) break;
+    }
+}
+
+
+/**
+ * @brief Perform nonlinear solve of A^T*q + Tplus*q[N-Z-1]*q = 0 using LU
+ * decomp
+ * 
+ * @param A Transition matrix of size (N-Z, N-Z)
+ * @param q column vector of quasi statariony state probabilities
+ * @param Tplus single element T+[N-Z-1]
+ * @param max_iter maximum number of iterations to perform
+ * @param tolerance tolerance for early stopping of solver
+ * @param size size of system (N-Z)
+ */
+void nonlinear_solve(const Eigen::MatrixXd& A, Eigen::VectorXd& q, 
+    const double& Tplus, const int& max_iter, 
+    const double& tolerance, const int& size)
+{
+    // Start with an initial guess for q
+    Eigen::VectorXd q_current = q;
+    Eigen::VectorXd ones = Eigen::VectorXd::Ones(size);
+
+    // Iterative solution using Newton's method
+    // q_{n+1} = q_n - J^{-1}(q_{n})*F(q_{n})
+    for (int iter = 0; iter < max_iter; ++iter) {
+
+        // Define the function F(q) = A*q + Tplus*q[N-Z-1]*q
+        // Ultimately want to find q s.t. F(q) = 0
+        Eigen::VectorXd F = A*q_current + Tplus*q_current[size-1]*q_current + q_current - ones;
+        double diff = F.norm();
+        std::cout << "F info" << std::endl;
+        std::cout << diff << std::endl;
+        for (const auto& ele : F) std::cout << ele << " ";
+        std::cout << std::endl;
+
+        // Check for convergence
+        if (diff < tolerance) {
+            std::cout << "Converged in " << iter << " iterations." << std::endl;
+            q = std::move(q_current);  // Store the solution
+            return;
+        }
+
+        // Compute the Jacobian matrix
+        Eigen::MatrixXd J = A;
+        for (int i = 0; i < size; ++i) J(i, i) += Tplus * q_current[size - 1] + 1;
+
+        // Compute the Newton-Raphson update step
+        // the iterative equation is q_{n+1} = q_n - J^{-1}(q_{n})*F(q_{n})
+        // can avoid calculating inverse
+        // instead solve for deltaq = q_{n+1}-q_{n} = -J^{-1}(q_{n})*F(q_{n})
+        // i.e. solving J(q_{n})*deltaq = -F(q_{n}) for deltaq
+        // then can write q_{n+1} = q_{n} + deltaq
+        // J*deltaq = -F can be solved with LU decomp
+        Eigen::VectorXd delta = J.lu().solve(-F);
+
+        std::cout << "delta info" << std::endl;
+        for (const auto& ele : delta) std::cout << ele << " ";
+        std::cout << std::endl;
+
+        // Update q
+        q_current += delta;
+
+    }
+
+    std::cerr << "Max iterations reached without convergence." << std::endl;
+    q = std::move(q_current);  // Return the best guess
+}
+
+
+
+
+
+
+/**
+ * @brief Calculate the quasi-stationary distribution in simulations for the
+ * nonlinear voter model in finite populations with absorbing zealots
+ * 
+ * @param q nonlinear vm param
+ * @param N system size
+ * @param Z number of zealots
+ */
+void quasi_stationary_distribution_simulation_nonlinear_vm(
+    const double& q, const int& N, const int& Z)
+{
+    std::stringstream qss;
+    qss << "q=" << q;
+    int n = 0;
+    std::stringstream Zss;
+    Zss << "Z=" << Z;
+    int S = N-Z;
+    int number_of_sims = 1e3;
+    
+    // run simulations for 50% of fixation time
+    double fixation_time = calculate_specific_fixation_time_nonlinear_vm(N, 0, Z, q);
+    double T = 0.7*fixation_time;
+
+    // set up folders for writing data
+    std::vector<std::string> folder_names = {
+        "nonlinear_vm", "quasi_stationary_distribution", qss.str(), Zss.str()};
+
+    // store results
+    std::vector<int> x_store;
+
+    // random number generator
+    pcg32 source = get_random_number_generator();
+
+    // Initialize atomic progress counter
+    std::atomic<int> progress(0);
+
+    // Start progress display thread
+    std::thread progress_thread(display_progress, std::ref(progress), number_of_sims);
+
+    // loop over all sims
+    #pragma omp parallel for
+    for (int j = 0; j < number_of_sims; j++){
+
+        // initialise system
+        double num_up_nodes = n;
+        double Tplus = calculate_T_plus_nonlinear_vm(N, num_up_nodes, Z, q);
+        double Tminus = calculate_T_minus_nonlinear_vm(N, num_up_nodes, Z, q);
+        double total_rate = Tplus + Tminus;
+
+        // run for time T
+        double t{0};
+        double r1, delta;
+        while (t < T){
+
+            // determine update time
+            r1 = draw_random_uniform(source);
+            delta = -1.*log(r1)/total_rate;
+            t += delta;
+
+            // flip node
+            if (draw_random_uniform(source) <= Tplus/total_rate) num_up_nodes += 1;
+            else num_up_nodes -= 1;
+
+            // recalculate rates
+            Tplus = calculate_T_plus_nonlinear_vm(N, num_up_nodes, Z, q);
+            Tminus = calculate_T_minus_nonlinear_vm(N, num_up_nodes, Z, q);
+            total_rate = Tplus + Tminus;
+
+            // absorbing state
+            if (num_up_nodes == S) break;
+
+        }
+
+        // store results
+        if (num_up_nodes != S){
+            #pragma omp critical
+            {
+                x_store.push_back(static_cast<int>(num_up_nodes));
+            }
+        }
+
+        progress++;
+    }
+    progress_thread.join();
+
+    // count frequency each x appears
+    std::unordered_map<int, int> mp;
+    for (const auto& x : x_store) mp[x]++;
+
+    // determine probaility distribution
+    int survived_sims = x_store.size();
+    std::vector<double> quasi_stationary_dist(N-Z, 0.);
+    for (int i{0}; i <= N-Z-1; i++){
+
+        // if number appeared
+        if (mp.find(i) != mp.end()) quasi_stationary_dist[i] = static_cast<double>(mp[i])/survived_sims;
+    }
+
+    // write data to file
+    write_single_vector_to_file(quasi_stationary_dist, folder_names, 
+        "q_sim_nonlinear_vm");
+
+}
